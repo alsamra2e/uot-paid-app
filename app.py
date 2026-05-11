@@ -6,7 +6,7 @@ import io
 import difflib
 
 # --- Page Configuration & Modern Styling ---
-st.set_page_config(page_title="نظام متابعة تسديدات قسم القانون", layout="wide")
+st.set_page_config(page_title="نظام متابعة تسديدات الطلاب", layout="wide")
 
 st.markdown("""
     <style>
@@ -17,11 +17,10 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚖️ نظام مطابقة القاعات والتسديدات - قسم القانون")
+st.title("📊 نظام مطابقة القاعات والتسديدات")
 
 # --- Helper Functions ---
 def clean_arabic_name(name):
-    """Normalize Arabic text but KEEP the full name to ensure exact identity."""
     if pd.isna(name): return ""
     name = str(name).strip()
     name = re.sub(r'[أإآ]', 'ا', name)
@@ -37,14 +36,11 @@ def clean_currency(val):
     except: return 0.0
 
 def process_percentage(val):
-    """Handles Excel's 0.7 decimal format and converts it to a clean 70.0"""
     if pd.isna(val): return 0.0
-    # If Excel passes 0.7 for 70%
     if isinstance(val, (int, float)):
         if 0 <= val <= 1:
             return val * 100
         return float(val)
-    # If it is read as a string like "70%"
     val = str(val).replace('%', '').strip()
     try: return float(val)
     except: return 0.0
@@ -58,7 +54,6 @@ def load_main_data():
         st.warning("يرجى التأكد من وجود ملف main_database.xlsx في نفس المجلد.")
         return pd.DataFrame()
         
-    # Remove invisible spaces from Excel headers to prevent KeyError
     df.columns = df.columns.str.strip()
     
     if 'اسم الطالب' not in df.columns:
@@ -79,20 +74,18 @@ if uploaded_file and not df_main.empty:
     df_daily = pd.read_excel(uploaded_file)
     df_daily.columns = df_daily.columns.str.strip()
     
-    # --- AUTOMATIC DEPARTMENT FILTER: Keep ONLY Law (قانون) ---
-    if 'المرحلة' in df_daily.columns:
-        df_daily = df_daily[df_daily['المرحلة'].astype(str).str.contains('قانون', na=False)].copy()
-        
     if df_daily.empty:
-        st.error("⚠️ لم يتم العثور على أي طلاب لقسم 'قانون' في الملف المرفوع.")
+        st.error("⚠️ الملف المرفوع فارغ.")
     else:
+        # --- DYNAMIC DEPARTMENT DETECTION ---
+        if 'المرحلة' in df_daily.columns:
+            detected_departments = df_daily['المرحلة'].dropna().unique()
+            st.success(f"✅ تم اكتشاف الأقسام/المراحل التالية في الملف: {', '.join(detected_departments)}")
+        
         # Clean and prepare daily data
         df_daily['Match_Key_Daily'] = df_daily['اسم الطالب'].apply(clean_arabic_name)
         df_daily['المبلغ المتبقي_رقم'] = df_daily['المبلغ المتبقي'].apply(clean_currency)
-        
-        # Process the percentage logic
         df_daily['نسبة الدفع_رقم'] = df_daily['نسبة الدفع'].apply(process_percentage)
-        # Format it back to look exactly like "70%" for the final table
         df_daily['نسبة الدفع'] = df_daily['نسبة الدفع_رقم'].apply(lambda x: f"{int(x) if x.is_integer() else x}%")
         
         # --- Fuzzy Matching Logic ---
@@ -104,7 +97,7 @@ if uploaded_file and not df_main.empty:
             matches = difflib.get_close_matches(daily_name, main_names_list, n=1, cutoff=0.85)
             return matches[0] if matches else None
 
-        with st.spinner('جاري مطابقة أسماء طلاب القانون...'):
+        with st.spinner('جاري مطابقة الأسماء...'):
             df_daily['Matched_DB_Name'] = df_daily['Match_Key_Daily'].apply(find_best_match)
 
         # Merge Data
@@ -115,13 +108,26 @@ if uploaded_file and not df_main.empty:
         # --- Dashboard Filters ---
         st.sidebar.markdown("---")
         st.sidebar.header("تصفية البيانات")
+        
+        # Dynamic Multiselect for Departments
+        if 'المرحلة' in merged_df.columns:
+            selected_stage = st.sidebar.multiselect(
+                "اختر القسم / المرحلة لعرضها (اتركه فارغاً لعرض الكل):", 
+                options=merged_df['المرحلة'].dropna().unique()
+            )
+        else:
+            selected_stage = []
+
         payment_threshold = st.sidebar.slider("نسبة الدفع أقل من أو تساوي (%)", 0, 100, 100)
         
         # Apply filters
         filtered_df = merged_df[merged_df['نسبة الدفع_رقم'] <= payment_threshold]
+        
+        if selected_stage:
+            filtered_df = filtered_df[filtered_df['المرحلة'].isin(selected_stage)]
 
         # --- Metrics & Infographics ---
-        st.markdown("### 📈 ملخص الإحصائيات (قسم القانون فقط)")
+        st.markdown("### 📈 ملخص الإحصائيات")
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("إجمالي الطلاب", f"{len(filtered_df)}")
         col2.metric("إجمالي الديون المتبقية", f"{filtered_df['المبلغ المتبقي_رقم'].sum():,.0f} IQD")
@@ -164,7 +170,7 @@ if uploaded_file and not df_main.empty:
         st.download_button(
             label="📥 تحميل التقرير النهائي (Excel)",
             data=buffer.getvalue(),
-            file_name="Law_Students_Report.xlsx",
+            file_name="Matched_Students_Report.xlsx",
             mime="application/vnd.ms-excel"
         )
 
