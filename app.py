@@ -51,6 +51,14 @@ def load_main_data():
         st.warning("يرجى التأكد من وجود ملف main_database.xlsx في نفس المجلد.")
         return pd.DataFrame()
         
+    # --- THE FIX: Remove invisible spaces from Excel headers ---
+    df.columns = df.columns.str.strip()
+    
+    # Safety check: If it STILL can't find it, show exactly what columns it sees
+    if 'اسم الطالب' not in df.columns:
+        st.error(f"⚠️ خطأ في ملف الإكسل: لم أتمكن من العثور على عمود 'اسم الطالب'. الأعمدة التي وجدتها هي: {list(df.columns)}")
+        return pd.DataFrame()
+
     df['Match_Key'] = df['اسم الطالب'].apply(clean_arabic_name)
     
     # CRITICAL: Drop duplicates to ensure we only have unique students
