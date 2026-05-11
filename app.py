@@ -83,10 +83,19 @@ if uploaded_file and not df_main.empty:
             st.success(f"✅ تم اكتشاف الأقسام/المراحل التالية في الملف: {', '.join(detected_departments)}")
         
         # Clean and prepare daily data
+        if 'اسم الطالب' not in df_daily.columns:
+            st.error(f"⚠️ خطأ: الملف اليومي لا يحتوي على عمود 'اسم الطالب'. الأعمدة الموجودة: {list(df_daily.columns)}")
+            st.stop()
+            
         df_daily['Match_Key_Daily'] = df_daily['اسم الطالب'].apply(clean_arabic_name)
-        df_daily['المبلغ المتبقي_رقم'] = df_daily['المبلغ المتبقي'].apply(clean_currency)
-        df_daily['نسبة الدفع_رقم'] = df_daily['نسبة الدفع'].apply(process_percentage)
-        df_daily['نسبة الدفع'] = df_daily['نسبة الدفع_رقم'].apply(lambda x: f"{int(x) if x.is_integer() else x}%")
+        
+        # Fallbacks for currency and percentage in case column names vary
+        currency_col = 'المبلغ المتبقي' if 'المبلغ المتبقي' in df_daily.columns else df_daily.columns[-2]
+        percent_col = 'نسبة الدفع' if 'نسبة الدفع' in df_daily.columns else df_daily.columns[-1]
+        
+        df_daily['المبلغ المتبقي_رقم'] = df_daily[currency_col].apply(clean_currency)
+        df_daily['نسبة الدفع_رقم'] = df_daily[percent_col].apply(process_percentage)
+        df_daily['نسبة الدفع_معروضة'] = df_daily['نسبة الدفع_رقم'].apply(lambda x: f"{int(x) if x.is_integer() else x}%")
         
         # --- Fuzzy Matching Logic ---
         main_names_list = df_main['Match_Key'].tolist()
@@ -109,12 +118,10 @@ if uploaded_file and not df_main.empty:
         st.sidebar.markdown("---")
         st.sidebar.header("تصفية البيانات")
         
-        # Dynamic Multiselect for Departments
+        # Safe Multiselect
         if 'المرحلة' in merged_df.columns:
-            selected_stage = st.sidebar.multiselect(
-                "اختر القسم / المرحلة لعرضها (اتركه فارغاً لعرض الكل):", 
-                options=merged_df['المرحلة'].dropna().unique()
-            )
+            stage_options = merged_df['المرحلة'].dropna().unique()
+            selected_stage = st.sidebar.multiselect("اختر القسم / المرحلة لعرضها:", options=stage_options)
         else:
             selected_stage = []
 
@@ -144,28 +151,42 @@ if uploaded_file and not df_main.empty:
             st.plotly_chart(fig1, use_container_width=True)
             
         with c2:
-            debt_by_stage = filtered_df.groupby('المرحلة')['المبلغ المتبقي_رقم'].sum().reset_index()
-            fig2 = px.pie(debt_by_stage, values='المبلغ المتبقي_رقم', names='المرحلة', 
-                          title="حجم الديون المتبقية حسب المرحلة الدراسية", hole=0.4)
-            st.plotly_chart(fig2, use_container_width=True)
+            # --- DYNAMIC CHART FIX ---
+            # Automatically choose a grouping column depending on what is available
+            chart_col = 'المرحلة' if 'المرحلة' in filtered_df.columns else ('القسم والمرحلة' if 'القسم والمرحلة' in filtered_df.columns else None)
+            
+            if chart_col:
+                debt_by_stage = filtered_df.groupby(chart_col)['المبلغ المتبقي_رقم'].sum().reset_index()
+                fig2 = px.pie(debt_by_stage, values='المبلغ المتبقي_رقم', names=chart_col, 
+                              title="حجم الديون المتبقية حسب المرحلة الدراسية", hole=0.4)
+                st.plotly_chart(fig2, use_container_width=True)
+            else:
+                st.info("📊 المخطط الدائري غير متاح: لا يوجد عمود يحدد المرحلة أو القسم.")
 
         # --- Data Display ---
         st.markdown("### 📝 جدول المطابقة النهائي")
-        display_cols = ['التسلسل', 'اسم الطالب', 'المرحلة', 'القسم والمرحلة', 'رقم القاعة', 'المبلغ المتبقي', 'نسبة الدفع']
+        
+        # --- DYNAMIC TABLE COLUMNS FIX ---
+        # Only display columns that actually exist in the merged dataframe
+        desired_cols = ['التسلسل', 'اسم الطالب', 'المرحلة', 'القسم والمرحلة', 'رقم القاعة', currency_col, 'نسبة الدفع_معروضة']
+        display_cols = [col for col in desired_cols if col in filtered_df.columns]
         
         missing_matches = filtered_df[filtered_df['رقم القاعة'].isna()]
         if not missing_matches.empty:
             st.error(f"⚠️ يوجد {len(missing_matches)} طالب لم يتم العثور على قاعاتهم. يرجى مراجعة أسمائهم.")
             with st.expander("عرض الطلاب غير المطابقين"):
-                st.dataframe(missing_matches[['التسلسل', 'اسم الطالب', 'المرحلة']], hide_index=True)
+                missing_display = [col for col in ['التسلسل', 'اسم الطالب', 'المرحلة'] if col in missing_matches.columns]
+                st.dataframe(missing_matches[missing_display], hide_index=True)
         
-        st.dataframe(filtered_df[display_cols], use_container_width=True, hide_index=True)
+        # Rename the displayed percentage column to look clean
+        final_table = filtered_df[display_cols].rename(columns={'نسبة الدفع_معروضة': 'نسبة الدفع'})
+        st.dataframe(final_table, use_container_width=True, hide_index=True)
 
         # --- Export to Excel ---
         st.markdown("---")
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            filtered_df[display_cols].to_excel(writer, index=False, sheet_name='تقرير المطابقة')
+            final_table.to_excel(writer, index=False, sheet_name='تقرير المطابقة')
         
         st.download_button(
             label="📥 تحميل التقرير النهائي (Excel)",
