@@ -264,8 +264,6 @@ if uploaded_file and not df_main.empty:
         cell_fmt = workbook.add_format({'align': 'center', 'valign': 'vcenter', 'border': 1})
         money_fmt = workbook.add_format({'align': 'center', 'valign': 'vcenter', 'border': 1, 'num_format': '#,##0'})
         
-        department_title = f"تقرير الأقسام: {', '.join(selected_stage) if selected_stage else 'جميع الأقسام'}"
-
         # 1. Matched Sheet
         matched_df = final_table.dropna(subset=['رقم القاعة'])
         matched_df.to_excel(writer, index=False, sheet_name='الطلاب المطابقين', startrow=2)
