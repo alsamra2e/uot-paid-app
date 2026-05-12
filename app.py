@@ -100,12 +100,11 @@ if uploaded_file and not df_main.empty:
     df_daily['نسبة الدفع_رقم'] = df_daily[percent_col].apply(process_percentage)
     df_daily['نسبة الدفع_معروضة'] = df_daily['نسبة الدفع_رقم'].apply(lambda x: f"{int(x) if x.is_integer() else x}%")
     
-    # --- Advanced Fuzzy Matching (Lowered Cutoff for 4-5 words) ---
+    # --- Advanced Fuzzy Matching ---
     main_names_list = df_main['Match_Key'].tolist()
     
     def find_best_match(daily_name):
         if daily_name in main_names_list: return daily_name
-        # Lowered to 0.75 to allow for missing 5th names or commas that were replaced by spaces
         matches = difflib.get_close_matches(daily_name, main_names_list, n=1, cutoff=0.75)
         return matches[0] if matches else None
 
@@ -129,10 +128,23 @@ if uploaded_file and not df_main.empty:
         stage_options = merged_df[dept_col_daily].dropna().unique()
         selected_stage = st.sidebar.multiselect("اختر القسم / المرحلة:", options=stage_options)
 
+    # NEW: Hall Number Filter (رقم القاعة)
+    selected_hall = []
+    if 'رقم القاعة' in merged_df.columns:
+        # Sort halls logically (numbers first, drop NaNs)
+        hall_options = sorted([x for x in merged_df['رقم القاعة'].unique() if pd.notna(x)], key=lambda x: str(x))
+        selected_hall = st.sidebar.multiselect("اختر رقم القاعة (لجدول المطابقة):", options=hall_options)
+
     payment_threshold = st.sidebar.slider("نسبة الدفع أقل من أو تساوي (%)", 0, 100, 100)
+    
+    # Apply filters
     filtered_df = merged_df[merged_df['نسبة الدفع_رقم'] <= payment_threshold]
+    
     if selected_stage:
         filtered_df = filtered_df[filtered_df[dept_col_daily].isin(selected_stage)]
+        
+    if selected_hall:
+        filtered_df = filtered_df[filtered_df['رقم القاعة'].isin(selected_hall)]
 
     # --- Dashboards ---
     st.markdown("### 📈 ملخص الإحصائيات")
@@ -149,8 +161,16 @@ if uploaded_file and not df_main.empty:
         st.plotly_chart(fig1, use_container_width=True)
     with col_chart2:
         if dept_col_daily:
-            debt_pie = filtered_df.groupby(dept_col_daily)['المبلغ المتبقي_رقم'].sum().reset_index()
-            fig2 = px.pie(debt_pie, values='المبلغ المتبقي_رقم', names=dept_col_daily, title="حجم الديون حسب القسم", hole=0.4)
+            # NEW: Changed Pie Chart to Bar Chart for Debts
+            debt_bar = filtered_df.groupby(dept_col_daily)['المبلغ المتبقي_رقم'].sum().reset_index()
+            # Sort to make it look nicer (highest debt first)
+            debt_bar = debt_bar.sort_values(by='المبلغ المتبقي_رقم', ascending=False)
+            
+            fig2 = px.bar(debt_bar, x=dept_col_daily, y='المبلغ المتبقي_رقم', 
+                          title="حجم الديون حسب القسم", 
+                          color_discrete_sequence=['#e74c3c'],
+                          text_auto='.2s') # This adds the numbers nicely on top of the bars
+            fig2.update_layout(xaxis_title="القسم / المرحلة", yaxis_title="إجمالي الدين (IQD)")
             st.plotly_chart(fig2, use_container_width=True)
 
     # --- Tables ---
@@ -191,7 +211,7 @@ if uploaded_file and not df_main.empty:
         
         for col_num, value in enumerate(matched_df.columns):
             ws_match.write(1, col_num, value, header_fmt)
-            ws_match.set_column(col_num, col_num, 20) # Set column width
+            ws_match.set_column(col_num, col_num, 20)
             
         for row_num in range(len(matched_df)):
             for col_num in range(len(matched_df.columns)):
@@ -232,7 +252,7 @@ if uploaded_file and not df_main.empty:
             ws_sum.write(row, 0, label, header_fmt)
             ws_sum.write(row, 1, val, money_fmt if 'الديون' in label else cell_fmt)
 
-        # Create Native Excel Chart if department column exists
+        # Native Excel Column Chart (Replacing the Pie Chart in Excel too)
         if dept_col_daily and len(filtered_df) > 0:
             dept_data = filtered_df.groupby(dept_col_daily)['المبلغ المتبقي_رقم'].sum().reset_index()
             ws_sum.write(7, 0, 'القسم', header_fmt)
@@ -241,7 +261,7 @@ if uploaded_file and not df_main.empty:
                 ws_sum.write(8 + i, 0, row[dept_col_daily], cell_fmt)
                 ws_sum.write(8 + i, 1, row['المبلغ المتبقي_رقم'], money_fmt)
                 
-            chart = workbook.add_chart({'type': 'pie'})
+            chart = workbook.add_chart({'type': 'column'})
             chart.add_series({
                 'name': 'الديون حسب القسم',
                 'categories': ['الملخص والإحصائيات', 8, 0, 8 + len(dept_data) - 1, 0],
