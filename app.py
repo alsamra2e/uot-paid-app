@@ -6,29 +6,63 @@ import io
 import difflib
 
 # --- Page Configuration & Modern Styling ---
-st.set_page_config(page_title="نظام مطابقة التسديدات", layout="wide")
+st.set_page_config(page_title="نظام مطابقة التسديدات", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
     <style>
-        body, .stApp { direction: rtl; text-align: right; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        .stMetric { background-color: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 5px solid #2ecc71; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-        h1, h2, h3 { color: #2c3e50; }
-        .stButton>button { border-radius: 8px; font-weight: bold; border: 1px solid #3498db; }
+        body, .stApp { direction: rtl; text-align: right; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; }
+        
+        /* Modern Floating Cards for Metrics */
+        div[data-testid="metric-container"] {
+            background-color: #ffffff;
+            border: 1px solid #e0e6ed;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.04);
+            border-right: 5px solid #3498db;
+            transition: transform 0.2s ease-in-out;
+        }
+        div[data-testid="metric-container"]:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 15px rgba(0,0,0,0.1);
+        }
+        
+        /* Stylish Buttons */
+        .stButton>button { 
+            border-radius: 10px; 
+            font-weight: bold; 
+            background: linear-gradient(135deg, #2ecc71, #27ae60);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            transition: all 0.3s ease;
+        }
+        .stButton>button:hover {
+            background: linear-gradient(135deg, #27ae60, #2ecc71);
+            box-shadow: 0 4px 10px rgba(46, 204, 113, 0.4);
+        }
+        
+        h1, h2, h3 { color: #2c3e50; font-weight: 700; }
+        
+        /* Modern Selectbox/Input focus */
+        .stSelectbox div[data-baseweb="select"] {
+            border-radius: 10px;
+        }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 نظام مطابقة القاعات والتسديدات المتقدم")
+st.title("✨ لوحة البيانات الذكية لمطابقة التسديدات المالية")
+st.markdown("---")
 
 # --- Helper Functions ---
 def clean_arabic_name(name):
-    """Deep cleans names: removes commas, standardizes characters, fixes spacing for 4-5 word names."""
     if pd.isna(name): return ""
     name = str(name).strip()
-    name = re.sub(r'[,،_.-]', ' ', name) # DESTROY commas and punctuation
+    name = re.sub(r'[,،_.-]', ' ', name)
     name = re.sub(r'[أإآ]', 'ا', name)
     name = re.sub(r'ة', 'ه', name)
     name = re.sub(r'ى', 'ي', name)
-    name = re.sub(r'\s+', ' ', name).strip() # Fix multiple spaces between words
+    name = re.sub(r'\s+', ' ', name).strip()
     return name
 
 def clean_currency(val):
@@ -45,6 +79,11 @@ def process_percentage(val):
     val = str(val).replace('%', '').strip()
     try: return float(val)
     except: return 0.0
+
+def categorize_payment(pct):
+    if pct >= 100: return "مكتمل (100%)"
+    elif pct > 0: return "دفع جزئي"
+    else: return "لم يدفع (0%)"
 
 # --- Load Static Main Data ---
 @st.cache_data
@@ -68,7 +107,7 @@ def load_main_data():
 df_main = load_main_data()
 
 # --- Daily File Uploader ---
-st.sidebar.header("رفع البيانات اليومية")
+st.sidebar.header("📂 رفع البيانات اليومية")
 uploaded_file = st.sidebar.file_uploader("ارفع ملف التسديدات اليومي (Excel)", type=["xlsx", "xls"])
 
 if uploaded_file and not df_main.empty:
@@ -83,13 +122,9 @@ if uploaded_file and not df_main.empty:
         st.error(f"⚠️ الملف اليومي لا يحتوي على 'اسم الطالب'. الأعمدة: {list(df_daily.columns)}")
         st.stop()
         
-    # --- Dynamic Column Detection (القسم vs القسم والمرحلة) ---
+    # --- Dynamic Column Detection ---
     dept_col_main = 'القسم' if 'القسم' in df_main.columns else ('القسم والمرحلة' if 'القسم والمرحلة' in df_main.columns else None)
     dept_col_daily = 'المرحلة' if 'المرحلة' in df_daily.columns else ('القسم' if 'القسم' in df_daily.columns else None)
-    
-    if dept_col_daily:
-        detected_departments = df_daily[dept_col_daily].dropna().unique()
-        st.success(f"✅ تم اكتشاف الأقسام: {', '.join(detected_departments)}")
 
     df_daily['Match_Key_Daily'] = df_daily['اسم الطالب'].apply(clean_arabic_name)
     
@@ -99,6 +134,7 @@ if uploaded_file and not df_main.empty:
     df_daily['المبلغ المتبقي_رقم'] = df_daily[currency_col].apply(clean_currency)
     df_daily['نسبة الدفع_رقم'] = df_daily[percent_col].apply(process_percentage)
     df_daily['نسبة الدفع_معروضة'] = df_daily['نسبة الدفع_رقم'].apply(lambda x: f"{int(x) if x.is_integer() else x}%")
+    df_daily['فئة الدفع'] = df_daily['نسبة الدفع_رقم'].apply(categorize_payment)
     
     # --- Advanced Fuzzy Matching ---
     main_names_list = df_main['Match_Key'].tolist()
@@ -108,10 +144,9 @@ if uploaded_file and not df_main.empty:
         matches = difflib.get_close_matches(daily_name, main_names_list, n=1, cutoff=0.75)
         return matches[0] if matches else None
 
-    with st.spinner('جاري مطابقة الأسماء المعقدة...'):
+    with st.spinner('جاري تحليل ومطابقة البيانات...'):
         df_daily['Matched_DB_Name'] = df_daily['Match_Key_Daily'].apply(find_best_match)
 
-    # Columns to merge from Main DB
     cols_to_merge = ['Match_Key', 'الرمز', 'رقم القاعة']
     if dept_col_main: cols_to_merge.append(dept_col_main)
 
@@ -119,76 +154,106 @@ if uploaded_file and not df_main.empty:
                          left_on='Matched_DB_Name', right_on='Match_Key', 
                          how='left')
     
-    # --- Filters ---
+    # --- Interactive Filters ---
     st.sidebar.markdown("---")
-    st.sidebar.header("تصفية البيانات")
+    st.sidebar.header("🎯 أدوات التصفية المتقدمة")
     
     selected_stage = []
     if dept_col_daily:
         stage_options = merged_df[dept_col_daily].dropna().unique()
-        selected_stage = st.sidebar.multiselect("اختر القسم / المرحلة:", options=stage_options)
+        selected_stage = st.sidebar.multiselect("📚 اختر القسم / المرحلة:", options=stage_options)
 
-    # NEW: Hall Number Filter (رقم القاعة)
     selected_hall = []
     if 'رقم القاعة' in merged_df.columns:
-        # Sort halls logically (numbers first, drop NaNs)
         hall_options = sorted([x for x in merged_df['رقم القاعة'].unique() if pd.notna(x)], key=lambda x: str(x))
-        selected_hall = st.sidebar.multiselect("اختر رقم القاعة (لجدول المطابقة):", options=hall_options)
+        selected_hall = st.sidebar.multiselect("🚪 اختر رقم القاعة:", options=hall_options)
 
-    payment_threshold = st.sidebar.slider("نسبة الدفع أقل من أو تساوي (%)", 0, 100, 100)
+    payment_threshold = st.sidebar.slider("💰 نسبة الدفع أقل من أو تساوي (%)", 0, 100, 100)
     
     # Apply filters
     filtered_df = merged_df[merged_df['نسبة الدفع_رقم'] <= payment_threshold]
-    
     if selected_stage:
         filtered_df = filtered_df[filtered_df[dept_col_daily].isin(selected_stage)]
-        
     if selected_hall:
         filtered_df = filtered_df[filtered_df['رقم القاعة'].isin(selected_hall)]
 
-    # --- Dashboards ---
-    st.markdown("### 📈 ملخص الإحصائيات")
+    # --- Metrics Dashboards ---
+    st.markdown("### 📊 ملخص الأداء المالي")
     total_debt = filtered_df['المبلغ المتبقي_رقم'].sum()
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("إجمالي الطلاب", f"{len(filtered_df)}")
-    c2.metric("إجمالي الديون", f"{total_debt:,.0f} IQD")
+    c2.metric("إجمالي الديون (المتبقي)", f"{total_debt:,.0f} IQD")
     c3.metric("متوسط نسبة الدفع", f"{filtered_df['نسبة الدفع_رقم'].mean():.1f}%")
-    c4.metric("غير مطابقين", f"{filtered_df['رقم القاعة'].isna().sum()}")
+    
+    missing_matches = filtered_df[filtered_df['رقم القاعة'].isna()]
+    c4.metric("الحالات غير المطابقة", f"{len(missing_matches)}")
 
+    # --- Modern Interactive Charts ---
+    st.markdown("<br>", unsafe_allow_html=True)
     col_chart1, col_chart2 = st.columns(2)
+    
     with col_chart1:
-        fig1 = px.histogram(filtered_df, x="نسبة الدفع_رقم", nbins=10, title="توزيع نسب الدفع", color_discrete_sequence=['#2ecc71'])
+        # NEW: Highly Interactive Donut Chart for Payment Status
+        pie_data = filtered_df['فئة الدفع'].value_counts().reset_index()
+        pie_data.columns = ['فئة الدفع', 'العدد']
+        
+        color_map = {"مكتمل (100%)": "#2ecc71", "دفع جزئي": "#f1c40f", "لم يدفع (0%)": "#e74c3c"}
+        
+        fig1 = px.pie(pie_data, values='العدد', names='فئة الدفع', 
+                      title="موقف تسديدات الطلاب", 
+                      hole=0.5, # Makes it a modern Donut chart
+                      color='فئة الدفع', color_discrete_map=color_map)
+        fig1.update_traces(textposition='inside', textinfo='percent+label', hoverinfo='label+percent+value')
+        fig1.update_layout(showlegend=False, margin=dict(t=50, b=0, l=0, r=0))
         st.plotly_chart(fig1, use_container_width=True)
+        
     with col_chart2:
         if dept_col_daily:
-            # NEW: Changed Pie Chart to Bar Chart for Debts
             debt_bar = filtered_df.groupby(dept_col_daily)['المبلغ المتبقي_رقم'].sum().reset_index()
-            # Sort to make it look nicer (highest debt first)
-            debt_bar = debt_bar.sort_values(by='المبلغ المتبقي_رقم', ascending=False)
+            debt_bar = debt_bar.sort_values(by='المبلغ المتبقي_رقم', ascending=True) # Sort for visual appeal
             
-            fig2 = px.bar(debt_bar, x=dept_col_daily, y='المبلغ المتبقي_رقم', 
-                          title="حجم الديون حسب القسم", 
+            fig2 = px.bar(debt_bar, x='المبلغ المتبقي_رقم', y=dept_col_daily, 
+                          orientation='h', # Horizontal modern bar chart
+                          title="حجم الديون المتبقية حسب القسم", 
                           color_discrete_sequence=['#e74c3c'],
-                          text_auto='.2s') # This adds the numbers nicely on top of the bars
-            fig2.update_layout(xaxis_title="القسم / المرحلة", yaxis_title="إجمالي الدين (IQD)")
+                          text_auto='.2s')
+            fig2.update_layout(xaxis_title="إجمالي الدين (IQD)", yaxis_title="", margin=dict(t=50, b=0, l=0, r=0))
             st.plotly_chart(fig2, use_container_width=True)
 
-    # --- Tables ---
+    st.markdown("---")
+
+    # --- NEW: Smart Dropdown for Unmatched Students ---
+    st.markdown("### ⚠️ مراجعة الطلاب غير المطابقين")
+    if not missing_matches.empty:
+        unmatched_names = missing_matches['اسم الطالب'].tolist()
+        
+        # The Dropdown (Selectbox)
+        selected_unmatched = st.selectbox(
+            "ابحث أو اختر اسم الطالب غير المطابق لعرض تفاصيله:", 
+            options=["-- اختر طالب من القائمة --"] + unmatched_names
+        )
+        
+        if selected_unmatched != "-- اختر طالب من القائمة --":
+            # Show details of the selected student beautifully
+            student_info = missing_matches[missing_matches['اسم الطالب'] == selected_unmatched].iloc[0]
+            st.info(f"**الاسم:** {student_info['اسم الطالب']} | **القسم المُدخل:** {student_info.get(dept_col_daily, 'غير محدد')} | **المبلغ المتبقي:** {student_info['المبلغ المتبقي_رقم']:,.0f} IQD")
+    else:
+        st.success("🎉 ممتاز! جميع الطلاب في هذا التقرير مطابقون لقاعدة البيانات الرئيسية.")
+
+    st.markdown("---")
+
+    # --- Final Data Table ---
     st.markdown("### 📝 جدول المطابقة النهائي")
     desired_cols = ['التسلسل', 'اسم الطالب', dept_col_daily, dept_col_main, 'رقم القاعة', currency_col, 'نسبة الدفع_معروضة']
     display_cols = [col for col in desired_cols if col and col in filtered_df.columns]
     
-    missing_matches = filtered_df[filtered_df['رقم القاعة'].isna()]
-    if not missing_matches.empty:
-        st.error(f"⚠️ يوجد {len(missing_matches)} طالب غير مطابق.")
-    
     final_table = filtered_df[display_cols].rename(columns={'نسبة الدفع_معروضة': 'نسبة الدفع'})
-    st.dataframe(final_table, use_container_width=True, hide_index=True)
+    
+    # Render table with a slight modern styling
+    st.dataframe(final_table, use_container_width=True, hide_index=True, height=400)
 
     # --- PROFESSIONAL EXCEL EXPORT ---
-    st.markdown("---")
-    st.markdown("### 📥 تصدير التقرير الاحترافي")
-    
+    st.markdown("<br>", unsafe_allow_html=True)
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
         workbook = writer.book
@@ -220,7 +285,7 @@ if uploaded_file and not df_main.empty:
                 if pd.isna(val): val = ""
                 ws_match.write(row_num + 2, col_num, val, fmt)
 
-        # 2. Missing Sheet (الغير مطابقين)
+        # 2. Missing Sheet
         if not missing_matches.empty:
             missing_export = missing_matches[[c for c in ['التسلسل', 'اسم الطالب', dept_col_daily, currency_col] if c in missing_matches.columns]]
             missing_export.to_excel(writer, index=False, sheet_name='الطلاب غير المطابقين', startrow=2)
@@ -252,7 +317,7 @@ if uploaded_file and not df_main.empty:
             ws_sum.write(row, 0, label, header_fmt)
             ws_sum.write(row, 1, val, money_fmt if 'الديون' in label else cell_fmt)
 
-        # Native Excel Column Chart (Replacing the Pie Chart in Excel too)
+        # Excel Chart
         if dept_col_daily and len(filtered_df) > 0:
             dept_data = filtered_df.groupby(dept_col_daily)['المبلغ المتبقي_رقم'].sum().reset_index()
             ws_sum.write(7, 0, 'القسم', header_fmt)
@@ -271,10 +336,11 @@ if uploaded_file and not df_main.empty:
             ws_sum.insert_chart('D2', chart)
 
     st.download_button(
-        label="📥 تحميل التقرير الاحترافي (Excel) مع التنسيق والجداول",
+        label="📥 تصدير التقرير الاحترافي (Excel)",
         data=buffer.getvalue(),
-        file_name="Advanced_Students_Report.xlsx",
-        mime="application/vnd.ms-excel"
+        file_name="Smart_Matched_Report.xlsx",
+        mime="application/vnd.ms-excel",
+        use_container_width=True
     )
 
 else:
