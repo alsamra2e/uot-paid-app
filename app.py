@@ -213,7 +213,6 @@ if uploaded_file and not df_main.empty:
         
     with col_chart2:
         if dept_col_daily:
-            # NEW CHART: Payment Status Distribution by Department (Stacked Bar)
             payment_by_dept = filtered_df.groupby([dept_col_daily, 'فئة الدفع']).size().reset_index(name='العدد')
             
             fig2 = px.bar(payment_by_dept, x='العدد', y=dept_col_daily, color='فئة الدفع',
@@ -256,59 +255,65 @@ if uploaded_file and not df_main.empty:
     
     st.dataframe(final_table, use_container_width=True, hide_index=True, height=400)
 
-    # --- PROFESSIONAL EXCEL EXPORT (Row 1 Header Fix) ---
+    # --- PROFESSIONAL EXCEL EXPORT (Combined Sheet Fix) ---
     st.markdown("<br>", unsafe_allow_html=True)
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
         workbook = writer.book
         
+        # Formats
         header_fmt = workbook.add_format({'bold': True, 'bg_color': '#2c3e50', 'font_color': '#ffffff', 'align': 'center', 'valign': 'vcenter', 'border': 1})
         cell_fmt = workbook.add_format({'align': 'center', 'valign': 'vcenter', 'border': 1})
         money_fmt = workbook.add_format({'align': 'center', 'valign': 'vcenter', 'border': 1, 'num_format': '#,##0'})
+        unmatched_fmt = workbook.add_format({'bg_color': '#fdedec', 'font_color': '#c0392b', 'align': 'center', 'valign': 'vcenter', 'border': 1}) # Light red for missing students
         title_fmt = workbook.add_format({'bold': True, 'font_size': 16, 'bg_color': '#ecf0f1', 'align': 'center', 'valign': 'vcenter', 'border': 1})
 
-        # 1. Matched Sheet (Headers start exactly at row 0)
-        matched_df = final_table.dropna(subset=['رقم القاعة'])
-        matched_df.to_excel(writer, index=False, sheet_name='الطلاب المطابقين', startrow=0)
+        # 1. Combined Matched & Unmatched Sheet
+        export_df = final_table.copy()
+        # Sort so unmatched (NaN in 'رقم القاعة') appear at the very bottom
+        export_df['is_missing'] = export_df['رقم القاعة'].isna()
+        export_df = export_df.sort_values(by=['is_missing', 'التسلسل']).drop(columns=['is_missing'])
+        
+        export_df.to_excel(writer, index=False, sheet_name='الطلاب المطابقين', startrow=0)
         ws_match = writer.sheets['الطلاب المطابقين']
         ws_match.right_to_left()
         
-        for col_num, value in enumerate(matched_df.columns):
-            ws_match.write(0, col_num, value, header_fmt) # Header on row 0
+        # Write Headers on row 0
+        for col_num, value in enumerate(export_df.columns):
+            ws_match.write(0, col_num, value, header_fmt)
             ws_match.set_column(col_num, col_num, 20)
             
-        for row_num in range(len(matched_df)):
-            for col_num in range(len(matched_df.columns)):
-                val = matched_df.iloc[row_num, col_num]
-                fmt = money_fmt if pd.api.types.is_numeric_dtype(type(val)) and val > 1000 else cell_fmt
-                if pd.isna(val): val = ""
-                ws_match.write(row_num + 1, col_num, val, fmt) # Data starts at row 1
+        # Write Data starting on row 1
+        for row_num in range(len(export_df)):
+            is_unmatched = pd.isna(export_df.iloc[row_num].get('رقم القاعة', None))
+            for col_num in range(len(export_df.columns)):
+                val = export_df.iloc[row_num, col_num]
+                
+                if pd.isna(val):
+                    val = "غير محدد"
+                
+                # Assign format based on unmatched status or currency
+                if is_unmatched:
+                    fmt = unmatched_fmt
+                elif isinstance(val, (int, float)) and val > 1000:
+                    fmt = money_fmt
+                else:
+                    fmt = cell_fmt
+                    
+                ws_match.write(row_num + 1, col_num, val, fmt)
 
-        # 2. Missing Sheet
-        if not missing_matches.empty:
-            missing_export = missing_matches[[c for c in ['التسلسل', 'اسم الطالب', dept_col_daily, currency_col] if c in missing_matches.columns]]
-            missing_export.to_excel(writer, index=False, sheet_name='الطلاب غير المطابقين', startrow=0)
-            ws_miss = writer.sheets['الطلاب غير المطابقين']
-            ws_miss.right_to_left()
-            
-            for col_num, value in enumerate(missing_export.columns):
-                ws_miss.write(0, col_num, value, header_fmt) # Header on row 0
-                ws_miss.set_column(col_num, col_num, 25)
-            for row_num in range(len(missing_export)):
-                for col_num in range(len(missing_export.columns)):
-                    val = missing_export.iloc[row_num, col_num]
-                    ws_miss.write(row_num + 1, col_num, "" if pd.isna(val) else val, cell_fmt) # Data starts at row 1
-
-        # 3. Dashboard / Summary Sheet
+        # 2. Dashboard / Summary Sheet
         ws_sum = workbook.add_worksheet('الملخص والإحصائيات')
         ws_sum.right_to_left()
         ws_sum.set_column('A:B', 25)
         ws_sum.merge_range('A1:B1', 'ملخص التقرير المالي', title_fmt)
         
+        matched_count = len(export_df) - len(missing_matches)
+        
         stats = [
             ('إجمالي الطلاب', len(filtered_df)),
             ('إجمالي الديون المتبقية (IQD)', total_debt),
-            ('الطلاب المطابقين', len(matched_df)),
+            ('الطلاب المطابقين', matched_count),
             ('الطلاب غير المطابقين', len(missing_matches))
         ]
         for row, (label, val) in enumerate(stats, start=1):
